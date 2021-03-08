@@ -1,0 +1,57 @@
+#!/bin/bash
+set -e
+export LANG=C
+pool=/var/lib/libvirt/images
+tmpFile=/tmp/disk-add.xml
+HELP(){
+echo "用法: $(basename $0) <domain> [-a size|-d disk|-l]"
+echo "选项："
+echo -e "  -a size\t热添加磁盘，size可指定大小，单位可以是G|M|T，暂不支持其他单位。"
+echo -e "  -d disk\t热移除磁盘，disk为磁盘名称，可使用-l选项查询。"
+echo -e "  -l \t\t列出虚拟机磁盘。"
+}
+[[ -z "$1" || "$1" == "-h" || "$1" == "--help" ]] && HELP && exit
+# 判断虚拟机是否存在且运行中
+stats=$(virsh list --all|awk '$2=="'$1'"{print $3}')
+[ -z "$stats" ] && echo "错误：虚拟机$1不存在" && exit
+[ "$stats" != "running" ] && echo "错误：虚拟机$1未运行" && exit
+# 添加，移除，列出磁盘
+case "$2" in
+-a)
+	[[ ! $3 =~ ^[0-9]+[gGmMtT]$ ]] && echo "错误：size参数输入有误" && exit  # size参数判断
+	cd $pool; i=1
+	while :;do                                                               # 确保新磁盘的名称不重复
+		[ -f "$1-add-$i.img" ] && let i++ && continue
+		diskFile=$1-add-$i.img && break
+	done
+	qemu-img create -q -f qcow2 $diskFile $3                                 # 创建新磁盘
+	bus=$(virsh dumpxml $1 |awk -F"'" '/[shv]da/{print $4}')
+	firstDiskName=$(virsh domblklist $1 |awk 'NR==3{print $1}')              # 通过原有磁盘的名称来确定新磁盘前缀
+	diskType=${firstDiskName::-1}                                            # 磁盘前缀
+	for j in {b..z};do                                                       # 确保新磁盘名称紧接着原有磁盘
+		! virsh domblklist $1|grep -q "^$diskType$j" && diskName=$diskType$j && break
+	done
+# 编写新加磁盘配置文件
+	cat > $tmpFile <<- eof
+	<disk type='file' device='disk'>
+	    <driver name='qemu' type='qcow2'/>
+	    <source file='$pool/$diskFile'/>
+	    <target dev='$diskName' bus='$bus'/>
+	</disk>
+	eof
+# 热添加磁盘
+	virsh attach-device $1 $tmpFile --persistent
+	#rm -rf $tmpFile
+	;;
+-d)
+	[[ ! $3 =~ ^[shv]d[a-z]$ ]] && echo "错误：disk参数输入有误" && exit
+	! virsh domblklist $1|grep -q -w "^$3" && echo "错误：磁盘$3不存在，请先执行-l检查" && exit
+	[[ $3 =~ a$ ]] && echo "错误：系统盘$3不允许删除" && exit
+	virsh detach-disk $1 $3 --persistent
+	;;
+-l)
+	virsh domblklist $1
+	;;
+*)
+	echo "错误：参数不足" && HELP && exit
+esac

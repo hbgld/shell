@@ -1,0 +1,20 @@
+#!/bin/bash
+tmpfile=/tmp/inactive-guests.txt
+echo "可用虚拟机："
+virsh list --inactive|awk 'NR>2{if($2){print ++a,$2}}' |tee $tmpfile
+echo
+read -p "请输入你想启动的虚拟机编号(可用,隔开多个编号;-连续的编号): "  start
+for i in $(tr "," " " <<< $start);do
+	if [[ $i =~ - ]];then
+		first=${i%-*}
+		last=${i#*-}
+		for j in $(seq $first $last);do
+			domain=$(awk '$1=='$j'{print $2}' $tmpfile)
+			[ -n "$domain" ] && virsh start $domain
+		done
+		continue
+	fi
+	domain=$(awk '$1=='$i'{print $2}' $tmpfile)
+	[ -n "$domain" ] && virsh start $domain
+done
+rm -rf $tmpfile

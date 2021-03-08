@@ -1,0 +1,39 @@
+#!/bin/bash
+set -ue
+# clone-link.sh <source-domain> <domain>
+# make sure if the source-domain is running
+[[ "$#" != 2 ]] && echo "Usage: $(basename $0) <src-dom> <dst-dom>" && exit
+export LANG=C
+red="\033[31m"
+none="\033[0m"
+
+# Make sure the source host is shut off
+stat=$(virsh list --all |awk '$2=='"\"$1\""'{print $3}')
+[ -z "$stat" ] && echo -e "虚拟机$red$1$none似乎不存在，请检查！" && exit 1
+if [ "$stat" == "running" ] ;then
+        echo -e "警告: 虚拟机$red$1$none正在运行中. "
+        echo -ne "强制关闭虚拟机$red$1$none并克隆请输入${red}y${none}或${red}yes${none}: "
+        read fclone
+        [[ ! "$fclone" =~ ^([yY][eE][sS]|[yY])$ ]] && echo "已取消" && exit
+        virsh destroy $1
+fi
+
+# Make sure the name is not exist
+virsh list --all |grep -w "$2" &> /dev/null && echo -e "虚拟机$red$2$none已存在，请重试" && exit
+
+### Clone 
+# Create increment_disk
+disk_src=$(virsh domblklist $1|awk '/^.da/{print $2}')
+disk_dir=$(dirname $disk_src)
+disk_name=$(basename $disk_src)
+cd $disk_dir
+qemu-img create -f qcow2  $2.qcow2 -b $disk_name  > /dev/null
+
+# Create config file
+cd /etc/libvirt/qemu/
+[ -f $2.xml ] && mv $2.xml{,.bak}
+virsh dumpxml $1|sed -r '/uuid|mac address/d'|sed -r "/name>/s/(>)(.*)(<)/\1$2\3/" > $2.xml
+sed -i "s#$disk_name#$2.qcow2#" $2.xml
+
+# Define host
+virsh define /etc/libvirt/qemu/$2.xml &> /dev/null && echo -e "虚拟机$red$2$none创建成功！"

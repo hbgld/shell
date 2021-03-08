@@ -1,0 +1,30 @@
+#!/bin/bash
+# 本脚本用于快速删除虚拟机
+export LANG=C
+green="\033[32m"
+none="\033[0m"
+
+DELETE(){
+disk=$(virsh domblklist $1|awk '/^[shv]d/{print $2}')
+virsh undefine $1 > /dev/null
+rm -rf $disk
+}
+
+[[ -z "$1" || "$1" == "-h" ]] && echo "用法: $(basename $0) <虚拟机名称>" && exit
+stats=$(virsh list --all|awk '$2=="'$1'"{print $3}')
+case "$stats" in
+running)
+	echo -en "虚拟机${green}$1${none}正在运行中，强制关闭并删除请输入${green}yes${none}：" ;;
+shut)
+	echo -en "确定删除虚拟机${green}$1${none}请输入${green}yes${none}：" ;;
+*)
+	echo -e "虚拟机${green}$1${none}不存在，请检查后重新输入！" && exit
+esac
+
+read choise
+if [[ "$choise" == "yes" ]];then
+	[ "$stats" == "running" ] && virsh destroy $1 > /dev/null
+	DELETE $1 && echo -e "虚拟机${green}$1${none}删除成功"
+else
+	echo "已取消"
+fi
